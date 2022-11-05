@@ -1,0 +1,47 @@
+---
+kind: pipeline
+type: kubernetes
+name: default
+
+steps:
+- name: build & push docker image (main branch)
+  image: plugins/docker
+  when:
+    branch:
+    - main
+    event:
+      exclude:
+        - tag
+  settings:
+    username:
+      from_secret: docker_username
+    password:
+      from_secret: docker_password
+    repo: lostpetinitiative/vk-crawler
+    context: DockerImage
+    dockerfile: DockerImage/Dockerfile
+    #target: final
+    auto_tag: true
+    force_tag: true
+    # build_args:
+    #  - VERSION=0.0.0.${DRONE_BUILD_NUMBER}
+    #  - GIT_COMMIT=${DRONE_COMMIT}
+- name: build & push docker image (TAG)
+  image: plugins/docker
+  when:
+    event:
+    - tag
+  settings:
+    username:
+      from_secret: docker_username
+    password:
+      from_secret: docker_password
+    repo: lostpetinitiative/vk-crawler
+    context: DockerImage
+    dockerfile: DockerImage/Dockerfile
+    #target: final
+    auto_tag: true
+    force_tag: true
+    # build_args:
+    #  - VERSION=${DRONE_TAG}.${DRONE_BUILD_NUMBER}
+    #  - GIT_COMMIT=${DRONE_COMMIT}

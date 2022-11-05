@@ -1,6 +1,8 @@
+import base64
 import os
 import datetime
 import math
+import json
 from time import sleep
 
 import vk_api
@@ -42,70 +44,67 @@ def GetWall(domain:str, token:str, count:int=100, offset:int=0):
 
     
     posts = vk.wall.get(domain=domain, count=count, filter=all, offset=offset)['items']
-    try:
-        for item in posts:
-            duplicate = False
-            c += 1
-            if item['id'] in post_ids:
-                print(f"Duplicate post {item['id']}\n")
-                continue
-            post_ids.add(item['id'])
-            if item['marked_as_ads'] == 1:
-                ads.append((item['id']))
-            if 'attachments' in item:
-                v += 1
-                photos = set()
-                post_id = item['id']
-                date = item['date']
-                text_content = item['text']
+    
+    for item in posts:
+        duplicate = False
+        c += 1
+        if item['id'] in post_ids:
+            print(f"Duplicate post {item['id']}\n")
+            continue
+        post_ids.add(item['id'])
+        if item['marked_as_ads'] == 1:
+            ads.append((item['id']))
+        if 'attachments' in item:
+            v += 1
+            photos = set()
+            post_id = item['id']
+            date = item['date']
+            text_content = item['text']
 
-                for images in item['attachments']:
-                    if images['type'] == 'photo':
-                        # check if duplicate, but it is unreliable, because if post is reuploaded it gets new id 
-                        # so catches only reposts
-                        if images['photo']['id'] in photo_ids:
-                            print(f"Duplicate photo {item['id']}")
-                            duplicate = True
-                            continue
-                        photo_ids.add(images['photo']['id'])
-                        try:
-                            # photo sizes: https://vk.com/dev/photo_sizes
-                            # we are intereseted in size 'x'
-                            propSizePhoto = [x['url'] for x in images['photo']['sizes'] if x['size']=='x']
-                            if len(propSizePhoto) == 0:
-                                raise(f"Photo {images['photo']['id']} does not have 'x' size")
-                            photos.add(propSizePhoto[0])
-                        except IndexError:
-                            pass
+            for images in item['attachments']:
+                if images['type'] == 'photo':
+                    # check if duplicate, but it is unreliable, because if post is reuploaded it gets new id 
+                    # so catches only reposts
+                    photo = images['photo']
+                    if photo['id'] in photo_ids:
+                        print(f"Duplicate photo {item['id']}")
+                        duplicate = True
+                        continue
+                    photo_ids.add(images['photo']['id'])
+                    
+                    # photo sizes: https://vk.com/dev/photo_sizes
+                    # we are intereseted in size 'x'
+                    propSizePhoto = [x['url'] for x in photo['sizes'] if x['type']=='x']
+                    if len(propSizePhoto) == 0:
+                        raise(f"Photo {photo['id']} does not have 'x' size")
+                    photos.add(propSizePhoto[0])
+                    # except IndexError:
+                    #     pass
 
-                    # working with video, gets a thumbnail of video file as image
-                    elif images['type'] == 'video':
-                        if images['video']['id'] in video_ids:
-                            print(f"Duplicate video {item['id']}")
-                            duplicate = True
-                            continue
-                        video_ids.add(images['video']['id'])
-                        resolutions = []
-                        for key, value in images['video'].items():
-                            if key.startswith('photo_'):
-                                resolutions.append(key.split('_')[1])
-                        res = f'photo_{max(resolutions)}'
-                        photos.add(images['video'][res])
+                # working with video, gets a thumbnail of video file as image
+                elif images['type'] == 'video':
+                    if images['video']['id'] in video_ids:
+                        print(f"Duplicate video {item['id']}")
+                        duplicate = True
+                        continue
+                    video_ids.add(images['video']['id'])
+                    resolutions = []
+                    for key, value in images['video'].items():
+                        if key.startswith('photo_'):
+                            resolutions.append(key.split('_')[1])
+                    res = f'photo_{max(resolutions)}'
+                    photos.add(images['video'][res])
 
-                # checks if there were any photos in the post, because we are not interested in post with text only
-                # also stops from adding exact duplicates
-                if photos != set() and not duplicate:
-                    wall_contents[post_id] = {
-                        'date': date,
-                        'owner_id': item['owner_id'],
-                        'text': text_content,
-                        'images': list(photos)
-                    }
-        return wall_contents
-        
-    except Exception as e:
-        print(f'{e} occurred on post {c}\n')
-        return
+            # checks if there were any photos in the post, because we are not interested in post with text only
+            # also stops from adding exact duplicates
+            if photos != set() and not duplicate:
+                wall_contents[post_id] = {
+                    'date': date,
+                    'owner_id': item['owner_id'],
+                    'text': text_content,
+                    'images': list(photos)
+                }
+    return wall_contents
 
 def InvokeClassifier(endpoint:str, text:str):
     requestData = [{'text': text}]
@@ -117,7 +116,7 @@ def InvokeClassifier(endpoint:str, text:str):
     x = requests.post(endpoint, headers=headers, json = requestData)
     if not x.ok:
         raise f"Request to classifier failed. status code {x.status_code}: {x.text}"
-    res = x.json
+    res = x.json()
     return res[0]
 
 def Main():
@@ -133,6 +132,8 @@ def Main():
     lostFoundClassifierEndpoint=config('LOST_FOUND_CLASSIFIER_ENDPOINT')
     catDogClassifierEndpoint=config('CAT_DOG_CLASSIFIER_ENDPOINT')
     maleFemaleClassifierEndpoint=config('MALE_FEMALE_CLASSIFIER_ENDPOINT')
+
+    pipelineNotificationURL = config('PIPELINE_NOTIFICATATION_URL',default='')
 
     numOfCrawlers=config('NUM_OF_CRAWLERS', default=1, cast=int)
     minPollingIntervalSec = config('MIN_POLL_INTERVAL', default=600, cast=int)
@@ -166,7 +167,7 @@ def Main():
         raise f"Unexpected lost/found card type classified: {classStr}"
         
     def ClassifySexByText(text:str):
-        classStr = InvokeClassifier(lostFoundClassifierEndpoint,text)
+        classStr = InvokeClassifier(maleFemaleClassifierEndpoint,text)
         # sexesDesc = ["Female","Male","NotDescribed/Other"]
 
         # re-encoding
@@ -181,7 +182,7 @@ def Main():
     if not os.path.exists(cardsDir):
         os.makedirs(cardsDir)
 
-    print(f"Cards dir:\t{cardsDir}\nCK Group Name:\t{vkGroupName}\nNumber of crawlers which uses the same API key:\t{numOfCrawlers}\nTargeting {targetApiRequestsCountPerDay} API requests per day (over all crawlers)")
+    print(f"Cards dir:\t{cardsDir}\nVK Group Name:\t{vkGroupName}\nNumber of crawlers which uses the same API key:\t{numOfCrawlers}\nTargeting {targetApiRequestsCountPerDay} API requests per day (over all crawlers)")
 
     escapedGroupName = vkGroupName.replace("_",".")
 
@@ -192,6 +193,9 @@ def Main():
 
     knownCardsSet = GetExistingCardDirs(cardsDir)
     print(f"Found {len(knownCardsSet)} already downloaded cards")
+
+    def CheckCardOnDisk(cardId:int):
+        return os.path.exists(os.path.join(cardsDir, f"{cardId}"))
 
     while True:
         startTime = datetime.datetime.now()
@@ -205,10 +209,12 @@ def Main():
             knownCardsSet = set(knownCardsList)
 
         posts = GetWall(vkGroupName, vkToken)
-        newPostKeys = [key for key in posts if not(key in knownCardsSet)]
+        # print("Posts")
+        # print(posts)
+        newPostKeys = [key for key in posts if not((key in knownCardsSet) or CheckCardOnDisk(key))]
         print(f"Detected {len(newPostKeys)} new messages")
 
-        for postID in posts:
+        for postID in newPostKeys:
             newPost = posts[postID]
 
             groupID = newPost['owner_id']
@@ -216,12 +222,41 @@ def Main():
             postCreationUnixTime = newPost['date']
             postCreationTime = datetime.datetime.fromtimestamp(postCreationUnixTime)
 
-            # ENCODE images
 
+            # fetching images
+            imagesBytes = []
+            encodedImages = []
+            for imageUrl in newPost['images']:
+                res = requests.get(imageUrl)
+                if not res.ok:
+                    raise f"Failed to download photo for card {postID} from url {imageUrl}"
+                imageBytes = res.content
+                imagesBytes.append(imageBytes)
+
+                contentMime = res.headers["content-type"]
+                if not contentMime.startswith("image/"):
+                    raise f"Downloaded image has not image mime: {contentMime}"
+                imageMime = contentMime[len("image/"):]
+                if imageMime == "jpeg":
+                    imageMime = "jpg"
+
+                # encoding images
+                im = {
+                    'type': imageMime,
+                    'data': base64.encodebytes(imageBytes).decode("utf-8").replace("\n","")
+                }
+                encodedImages.append(im)
+
+
+            # composing JSON for pipeline
             text = newPost['text']
+            animal = ClassifySpeciesByText(text)
+            print(f"Post {postID} has been classified as discribing {animal}")
+            card_type = ClassifyCardTypeByText(text)
+            print(f"Post {postID} has been classified as discribing {card_type}")
             card = {
                 'uid': f"vk.{escapedGroupName}_{postID}",
-                'animal': ClassifySpeciesByText(text),
+                'animal': animal,
                 'location': {
                     'Address' : locationAddressText,
                     "Lat": locationLat,
@@ -229,8 +264,8 @@ def Main():
                     "CoordsProvenance": "Hardcoded in crawler configuration"
                 },
                 'event_time': postCreationTime.isoformat(),
-                "event_time_provenance": "Время создание поста",
-                "card_type": ClassifyCardTypeByText(text),
+                "event_time_provenance": "Время публикации поста",
+                "card_type": card_type,
                 "contact_info": {
                     "Comment": text,
                     "Tel":[],
@@ -238,56 +273,44 @@ def Main():
                     "Email":[],
                     "Name":""
                 },
+                "images": encodedImages,
                 "provenance_url": f"https://vk.com/wall{groupID}_{postID}"
             }
 
             sexDesc = ClassifySexByText(text)
+            print(f"Post {postID} has been classified as discribing pet to have the following sex: {sexDesc}")
+
             if not (sexDesc is None):
                 card["animal_sex"] = sexDesc
 
-            # composing JSON for pipeline
+            if pipelineNotificationURL == '':
+                print(f"SKIPPING pipeline notification as pipeline notification URL is not defined")
+            else:
+                print(f"Notifying the pipeline to submit card {postID}")
+                requests.post(pipelineNotificationURL, json=card)
+                print(f"Successfully notified pipeline about card {postID}")
 
-#             {
-# "uid":"pet911ru_rf591749"
-# "animal":"cat"
-# "location":{
-# "Address":"Московская область"
-# "Lat":55.473808
-# "Lon":38.163297
-# "CoordsProvenance":"Указано на сайте pet911.ru"
-# }
-# "event_time":"2022-11-04T00:00:00Z"
-# "event_time_provenance":"Указано на сайте pet911.ru"
-# "card_type":"found"
-# "contact_info":{
-# "Comment":"Найден кот мальчик, прибился к СНТ &quot;муравушка&quot;, этим летом, коту примерно 5 лет очень ласковый немного пуглив и недоверчив с хорактером,но к людям подходит если позвать ,гладить даётся. Нужн ..."
-# "Tel":[]
-# "Website":[]
-# "Email":[]
-# "Name":"Евчик Елена Андреевна"
-# }
-# "images":[
-# 0:{...
-# }
-# 1:{...
-# }
-# 2:{...
-# }
-# 3:{...
-# }
-# 4:{...
-# }
-# ]
-# "provenance_url":"https://pet911.ru/%D0%9A%D1%80%D0%B0%D1%81%D0%BD%D0%BE%D0%B4%D0%B0%D1%80/%D0%BD%D0%B0%D0%B9%D0%B4%D0%B5%D0%BD%D0%B0/%D0%BA%D0%BE%D1%88%D0%BA%D0%B0/rf591749"
-# "animal_sex":"male"
-# }
+            # dumping to disk
+            cardDir = os.path.join(cardsDir,f"{postID}")
+            os.makedirs(cardDir)
+            # writing images
+            for i,im in enumerate(card['images']):
+                fName = f"{i}.{im['type']}"
+                with open(os.path.join(cardDir,fName),"wb") as f:
+                    f.write(imagesBytes[i])
+                print(f"wrote image {i} for card {postID}")
+                im['type'] = "file"
+                im['data'] = fName
+            with open(os.path.join(cardDir,"card.json"),"w") as f:
+                json.dump(card, f)
+            print(f"Wrote card json for card {postID}")
 
         finishTime = datetime.datetime.now()
         elapsed = finishTime - startTime
         toSleep = pollInterval - elapsed
-        if toSleep > 0:
+        if toSleep.total_seconds() > 0:
             print(f"Sleeping for {toSleep}")
-            sleep(toSleep)
+            sleep(toSleep.total_seconds())
 
 
 if __name__ == '__main__':
