@@ -136,7 +136,7 @@ def Main():
     pipelineNotificationURL = config('PIPELINE_NOTIFICATATION_URL',default='')
 
     numOfCrawlers=config('NUM_OF_CRAWLERS', default=1, cast=int)
-    minPollingIntervalSec = config('MIN_POLL_INTERVAL', default=600, cast=int)
+    minPollingIntervalSec = config('MIN_POLL_INTERVAL_SEC', default=600, cast=int)
     targetApiRequestsCountPerDay = config('API_REQUESTS_PET_DAY', default=4000, cast=int) # 5000 calls per day allowed
     knownCardsTrackingCount=config('KNOWN_CARDS_TRACKING_COUNT', default=1024, cast=int)
 
@@ -184,7 +184,7 @@ def Main():
 
     print(f"Cards dir:\t{cardsDir}\nVK Group Name:\t{vkGroupName}\nNumber of crawlers which uses the same API key:\t{numOfCrawlers}\nTargeting {targetApiRequestsCountPerDay} API requests per day (over all crawlers)")
 
-    escapedGroupName = vkGroupName.replace("_",".")
+    escapedGroupName = vkGroupName.replace("_","").replace(".","")
 
     pollIntervalSec = max(minPollingIntervalSec, 24*60*60 / targetApiRequestsCountPerDay * numOfCrawlers)
     pollInterval:datetime.timedelta = datetime.timedelta(seconds=pollIntervalSec)
@@ -215,6 +215,7 @@ def Main():
         print(f"Detected {len(newPostKeys)} new messages")
 
         for postID in newPostKeys:
+            knownCardsSet.add(postID)
             newPost = posts[postID]
 
             groupID = newPost['owner_id']
@@ -251,11 +252,19 @@ def Main():
             # composing JSON for pipeline
             text = newPost['text']
             animal = ClassifySpeciesByText(text)
-            print(f"Post {postID} has been classified as discribing {animal}")
+            if animal is None:
+                print(f"Skipping card {postID} as species can't be determened")
+                continue
+            else:
+                print(f"Post {postID} has been classified as discribing {animal}")
             card_type = ClassifyCardTypeByText(text)
-            print(f"Post {postID} has been classified as discribing {card_type}")
+            if animal is None:
+                print(f"Skipping card {postID} as card type can't be determened")
+                continue
+            else:
+                print(f"Post {postID} has been classified as discribing {card_type}")
             card = {
-                'uid': f"vk.{escapedGroupName}_{postID}",
+                'uid': f"vk-{escapedGroupName}_{postID}",
                 'animal': animal,
                 'location': {
                     'Address' : locationAddressText,
@@ -263,7 +272,7 @@ def Main():
                     "Lon": locationLon,
                     "CoordsProvenance": "Hardcoded in crawler configuration"
                 },
-                'event_time': postCreationTime.isoformat(),
+                'event_time': postCreationTime.isoformat()+"Z",
                 "event_time_provenance": "Время публикации поста",
                 "card_type": card_type,
                 "contact_info": {
@@ -304,6 +313,8 @@ def Main():
             with open(os.path.join(cardDir,"card.json"),"w") as f:
                 json.dump(card, f)
             print(f"Wrote card json for card {postID}")
+
+        
 
         finishTime = datetime.datetime.now()
         elapsed = finishTime - startTime
