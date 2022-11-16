@@ -23,7 +23,7 @@ def GetExistingCardDirs(dir: str):
             result.add(parsed)
     return result
 
-def GetWall(domain:str, token:str, count:int=100, offset:int=0):
+def GetWall(groupName:str, token:str, count:int=100, offset:int=0):
     vk_session = vk_api.VkApi(token=token)
 
     vk = vk_session.get_api()
@@ -42,8 +42,30 @@ def GetWall(domain:str, token:str, count:int=100, offset:int=0):
     video_ids = set()
     post_ids = set()
 
-    
-    posts = vk.wall.get(domain=domain, count=count, filter=all, offset=offset)['items']
+    posts = []
+    fetchByDomain = False
+    fetchByOwner = False
+    ownerId = 0
+
+    if groupName.startswith("club"):
+        idCand = groupName[4:]
+        id,success = intTryParse(idCand)
+        if success:
+            fetchByOwner = True
+            ownerId = -id
+        else:
+            fetchByDomain = True
+    else:
+        fetchByDomain = True
+
+    if fetchByDomain:
+        print(f"Fetching by group human name: {groupName}")
+        posts = vk.wall.get(domain=groupName, count=count, filter=all, offset=offset)['items']
+    elif fetchByOwner:
+        print(f"Fetching by owner_id: {ownerId}")
+        posts = vk.wall.get(owner_id=ownerId, count=count, filter=all, offset=offset)['items']
+    else:
+        raise "Neither domain nor owner_id specified for fetch"
     
     for item in posts:
         duplicate = False
