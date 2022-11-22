@@ -280,7 +280,7 @@ def Main():
             else:
                 print(f"Post {postID} has been classified as discribing {animal}")
             card_type = ClassifyCardTypeByText(text)
-            if animal is None:
+            if card_type is None:
                 print(f"Skipping card {postID} as card type can't be determened")
                 continue
             else:
